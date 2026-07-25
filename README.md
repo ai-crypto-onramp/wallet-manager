@@ -211,7 +211,7 @@ Environment variables:
 | `MPC_SIGNING_URL` | gRPC endpoint of the MPC Signing Service. | `dns:///mpc-signing:9090` |
 | `BLOCKCHAIN_GATEWAY_URL` | gRPC endpoint of the Blockchain Gateway. | `dns:///blockchain-gateway:9090` |
 | `TREASURY_ORCHESTRATION_URL` | REST endpoint for funding requests. | `http://treasury-orchestration:8080` |
-| `POLICY_RISK_ENGINE_URL` | REST endpoint for whitelist checks. | `http://policy-risk-engine:8080` |
+| `POLICY_RISK_ENGINE_URL` | REST endpoint for whitelist checks. | `http://engine-policy-risk:8080` |
 | `AUDIT_EVENT_LOG_URL` | REST/eventbus endpoint for audit events. | `http://audit-event-log:8080` |
 | `HOT_WALLET_MIN_BALANCE_USD` | Threshold below which a funding request fires. | `50000` |
 | `DERIVATION_CACHE_TTL` | TTL for derived public-key cache in Redis. | `300s` |
