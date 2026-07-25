@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ai-crypto-onramp/wallet-management/internal/cache"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/cache"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/google/uuid"
 )

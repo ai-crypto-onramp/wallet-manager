@@ -38,10 +38,10 @@ migrate-new:
 	echo "created migrations/$${next}_$(NAME).{up,down}.sql"
 
 docker-build:
-	docker build -t ai-crypto-onramp/wallet-management .
+	docker build -t ai-crypto-onramp/wallet-manager .
 
 docker-run:
-	docker run --rm -p 8080:8080 -p 9090:9090 ai-crypto-onramp/wallet-management
+	docker run --rm -p 8080:8080 -p 9090:9090 ai-crypto-onramp/wallet-manager
 
 docker-up:
 	docker compose up -d --wait

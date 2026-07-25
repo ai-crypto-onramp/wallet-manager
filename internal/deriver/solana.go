@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ai-crypto-onramp/wallet-management/internal/cache"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/cache"
 	"github.com/btcsuite/btcd/btcutil/base58"
 	"github.com/google/uuid"
 )

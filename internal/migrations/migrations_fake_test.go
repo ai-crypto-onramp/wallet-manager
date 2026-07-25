@@ -11,7 +11,7 @@ import (
 
 	"database/sql/driver"
 
-	"github.com/ai-crypto-onramp/wallet-management/internal/storage/postgres"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/storage/postgres"
 )
 
 // fakeDriver is a database/sql/driver.Driver and Connector backed by an

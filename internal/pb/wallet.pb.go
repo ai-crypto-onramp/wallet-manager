@@ -376,7 +376,7 @@ const file_wallet_proto_rawDesc = "" +
 	"\rWalletService\x12I\n" +
 	"\fResolveKeyID\x12\x1b.wallet.ResolveKeyIDRequest\x1a\x1c.wallet.ResolveKeyIDResponse\x12>\n" +
 	"\x0eOnConfirmation\x12\x1d.wallet.OnConfirmationRequest\x1a\r.wallet.Empty\x120\n" +
-	"\aOnReorg\x12\x16.wallet.OnReorgRequest\x1a\r.wallet.EmptyBDZBgithub.com/ai-crypto-onramp/wallet-management/internal/pb;walletpbb\x06proto3"
+	"\aOnReorg\x12\x16.wallet.OnReorgRequest\x1a\r.wallet.EmptyBDZBgithub.com/ai-crypto-onramp/wallet-manager/internal/pb;walletpbb\x06proto3"
 
 var (
 	file_wallet_proto_rawDescOnce sync.Once

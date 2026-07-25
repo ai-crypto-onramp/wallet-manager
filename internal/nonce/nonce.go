@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ai-crypto-onramp/wallet-management/internal/lock"
-	"github.com/ai-crypto-onramp/wallet-management/internal/storage"
-	"github.com/ai-crypto-onramp/wallet-management/internal/wallet"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/lock"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/storage"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/wallet"
 	"github.com/google/uuid"
 )
 

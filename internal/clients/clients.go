@@ -14,8 +14,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/ai-crypto-onramp/wallet-management/internal/grpcclient"
-	walletpb "github.com/ai-crypto-onramp/wallet-management/internal/pb"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/grpcclient"
+	walletpb "github.com/ai-crypto-onramp/wallet-manager/internal/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )

@@ -258,7 +258,7 @@ const file_clients_proto_rawDesc = "" +
 	"\x11MPCSigningService\x121\n" +
 	"\x04Sign\x12\x13.wallet.SignRequest\x1a\x14.wallet.SignResponse2X\n" +
 	"\x0eGatewayService\x12F\n" +
-	"\vBroadcastTx\x12\x1a.wallet.BroadcastTxRequest\x1a\x1b.wallet.BroadcastTxResponseBDZBgithub.com/ai-crypto-onramp/wallet-management/internal/pb;walletpbb\x06proto3"
+	"\vBroadcastTx\x12\x1a.wallet.BroadcastTxRequest\x1a\x1b.wallet.BroadcastTxResponseBDZBgithub.com/ai-crypto-onramp/wallet-manager/internal/pb;walletpbb\x06proto3"
 
 var (
 	file_clients_proto_rawDescOnce sync.Once

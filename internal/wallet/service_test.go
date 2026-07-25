@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ai-crypto-onramp/wallet-management/internal/audit"
-	"github.com/ai-crypto-onramp/wallet-management/internal/cache"
-	"github.com/ai-crypto-onramp/wallet-management/internal/config"
-	"github.com/ai-crypto-onramp/wallet-management/internal/deriver"
-	"github.com/ai-crypto-onramp/wallet-management/internal/lock"
-	"github.com/ai-crypto-onramp/wallet-management/internal/storage/memstore"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/audit"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/cache"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/config"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/deriver"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/lock"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/storage/memstore"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/google/uuid"
 )

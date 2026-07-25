@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ai-crypto-onramp/wallet-management/internal/storage/postgres"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/storage/postgres"
 )
 
 // Up runs all up migrations embedded in the migrations directory.

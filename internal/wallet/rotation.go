@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ai-crypto-onramp/wallet-management/internal/audit"
-	"github.com/ai-crypto-onramp/wallet-management/internal/config"
-	"github.com/ai-crypto-onramp/wallet-management/internal/deriver"
-	"github.com/ai-crypto-onramp/wallet-management/internal/lock"
-	"github.com/ai-crypto-onramp/wallet-management/internal/storage"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/audit"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/config"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/deriver"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/lock"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/storage"
 	"github.com/google/uuid"
 )
 

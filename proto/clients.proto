@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package wallet;
 
-option go_package = "github.com/ai-crypto-onramp/wallet-management/internal/pb;walletpb";
+option go_package = "github.com/ai-crypto-onramp/wallet-manager/internal/pb;walletpb";
 
 // MPCSigningService is served by mpc-signing-service. wallet-management is a
 // client of Sign.

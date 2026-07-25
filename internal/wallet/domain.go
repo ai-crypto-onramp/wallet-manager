@@ -9,7 +9,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/ai-crypto-onramp/wallet-management/internal/domain"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/domain"
 )
 
 // Re-export domain types so existing call sites compile unchanged.

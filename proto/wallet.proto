@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package wallet;
 
-option go_package = "github.com/ai-crypto-onramp/wallet-management/internal/pb;walletpb";
+option go_package = "github.com/ai-crypto-onramp/wallet-manager/internal/pb;walletpb";
 
 // WalletService is served by wallet-management for MPC Signing and
 // Blockchain Gateway integration.

@@ -9,7 +9,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/ai-crypto-onramp/wallet-management/internal/domain"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/domain"
 	"github.com/google/uuid"
 )
 

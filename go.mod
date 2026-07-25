@@ -1,4 +1,4 @@
-module github.com/ai-crypto-onramp/wallet-management
+module github.com/ai-crypto-onramp/wallet-manager
 
 go 1.25.0
 

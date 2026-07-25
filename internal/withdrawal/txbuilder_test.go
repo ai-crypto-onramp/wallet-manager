@@ -5,8 +5,8 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/ai-crypto-onramp/wallet-management/internal/storage"
-	"github.com/ai-crypto-onramp/wallet-management/internal/wallet"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/storage"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/wallet"
 	"github.com/btcsuite/btcd/btcec/v2"
 	btcecdsa "github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/wire"

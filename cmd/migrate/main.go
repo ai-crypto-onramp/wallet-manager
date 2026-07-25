@@ -11,9 +11,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/ai-crypto-onramp/wallet-management/internal/config"
-	"github.com/ai-crypto-onramp/wallet-management/internal/migrations"
-	"github.com/ai-crypto-onramp/wallet-management/internal/storage/postgres"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/config"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/migrations"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/storage/postgres"
 )
 
 func main() {

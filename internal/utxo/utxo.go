@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/ai-crypto-onramp/wallet-management/internal/storage"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/storage"
 	"github.com/google/uuid"
 )
 

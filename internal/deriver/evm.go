@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ai-crypto-onramp/wallet-management/internal/cache"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/cache"
 	"github.com/btcsuite/btcd/btcutil/hdkeychain"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/sha3"

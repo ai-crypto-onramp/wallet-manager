@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ai-crypto-onramp/wallet-management/internal/cache"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/cache"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/btcutil/bech32"
 	"github.com/btcsuite/btcd/btcutil/hdkeychain"
