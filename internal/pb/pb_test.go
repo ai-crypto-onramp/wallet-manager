@@ -227,18 +227,18 @@ func TestClientsMessagesAccessors(t *testing.T) {
 // TestFileDescriptors exercises the package-level FileDescriptor vars and the
 // GZIP raw-desc lazy initialization paths.
 func TestFileDescriptors(t *testing.T) {
-	if File_wallet_proto == nil {
-		t.Error("File_wallet_proto is nil")
+	if File_proto_wallet_proto == nil {
+		t.Error("File_proto_wallet_proto is nil")
 	}
-	if File_clients_proto == nil {
-		t.Error("File_clients_proto is nil")
+	if File_proto_clients_proto == nil {
+		t.Error("File_proto_clients_proto is nil")
 	}
-	file_wallet_proto_init()
-	file_clients_proto_init()
-	_ = file_wallet_proto_rawDescGZIP()
-	_ = file_wallet_proto_rawDescGZIP()
-	_ = file_clients_proto_rawDescGZIP()
-	_ = file_clients_proto_rawDescGZIP()
+	file_proto_wallet_proto_init()
+	file_proto_clients_proto_init()
+	_ = file_proto_wallet_proto_rawDescGZIP()
+	_ = file_proto_wallet_proto_rawDescGZIP()
+	_ = file_proto_clients_proto_rawDescGZIP()
+	_ = file_proto_clients_proto_rawDescGZIP()
 }
 
 func TestUnimplementedMPCSigningServiceServer(t *testing.T) {
