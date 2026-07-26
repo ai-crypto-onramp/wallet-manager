@@ -14,6 +14,7 @@ import (
 	"net"
 
 	"github.com/ai-crypto-onramp/wallet-manager/internal/balance"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/authtoken"
 	"github.com/ai-crypto-onramp/wallet-manager/internal/keymapping"
 	"github.com/ai-crypto-onramp/wallet-manager/internal/storage"
 	"github.com/ai-crypto-onramp/wallet-manager/internal/wallet"
@@ -96,7 +97,11 @@ type Server struct {
 
 // NewServer constructs a new gRPC server (not yet listening).
 func NewServer(d Deps) *Server {
-	gs := grpc.NewServer(grpc.ForceServerCodec(jsonCodec{}))
+	secret, bypass := authtoken.SecretFromEnv()
+	gs := grpc.NewServer(
+		grpc.ForceServerCodec(jsonCodec{}),
+		grpc.UnaryInterceptor(authtoken.GRPCUnaryInterceptor(secret, bypass)),
+	)
 	s := &Server{
 		GRPCServer:  gs,
 		KeyMappings: d.KeyMappings,

@@ -6,17 +6,26 @@
 //
 // Both clients use the generated stubs in internal/pb (walletpb). They dial on
 // construction and hold a single *grpc.ClientConn for the lifetime of the
-// process. mTLS / custom dial options can be supplied via the Options struct.
+// process. In production (DEV_MODE!=1) the default transport is TLS/mTLS using
+// credentials loaded from TLS_CA_CERT_FILE / TLS_CLIENT_CERT_FILE /
+// TLS_CLIENT_KEY_FILE; in DEV_MODE=1 the default falls back to plaintext
+// insecure credentials for the local harness. Custom dial options can be
+// supplied via the Options struct to override either default.
 package clients
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"log"
+	"os"
 	"sync"
 
 	"github.com/ai-crypto-onramp/wallet-manager/internal/grpcclient"
 	walletpb "github.com/ai-crypto-onramp/wallet-manager/internal/pb"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
@@ -27,17 +36,51 @@ type dialConfig struct {
 	grpcOpts []grpc.DialOption
 }
 
-// WithGRPCDialOptions overrides the default (insecure) gRPC dial options. Use
-// this to plug in TLS credentials, interceptors, etc.
+// WithGRPCDialOptions overrides the default gRPC dial options (TLS in prod,
+// insecure in DEV_MODE=1). Use this to plug in interceptors, custom
+// transport creds, or in-test bufconn dialers.
 func WithGRPCDialOptions(opts ...grpc.DialOption) DialOption {
 	return func(c *dialConfig) {
 		c.grpcOpts = opts
 	}
 }
 
-func defaultDialConfig() dialConfig {
+// defaultDialConfig returns the production TLS dial options when devMode is
+// false, loading the CA and client cert/key from TLS_CA_CERT_FILE,
+// TLS_CLIENT_CERT_FILE, and TLS_CLIENT_KEY_FILE. In DEV_MODE=1 (devMode true)
+// it returns insecure transport credentials for the local harness.
+// In production, missing or unreadable TLS material is fatal.
+func defaultDialConfig(devMode bool) dialConfig {
+	if devMode {
+		return dialConfig{
+			grpcOpts: []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())},
+		}
+	}
+	caPath := os.Getenv("TLS_CA_CERT_FILE")
+	certPath := os.Getenv("TLS_CLIENT_CERT_FILE")
+	keyPath := os.Getenv("TLS_CLIENT_KEY_FILE")
+	if caPath == "" || certPath == "" || keyPath == "" {
+		log.Fatalf("TLS_CA_CERT_FILE, TLS_CLIENT_CERT_FILE, and TLS_CLIENT_KEY_FILE required in production mode — set DEV_MODE=1 for local dev")
+	}
+	caPEM, err := os.ReadFile(caPath)
+	if err != nil {
+		log.Fatalf("read TLS_CA_CERT_FILE %q: %v", caPath, err)
+	}
+	caPool := x509.NewCertPool()
+	if !caPool.AppendCertsFromPEM(caPEM) {
+		log.Fatalf("TLS_CA_CERT_FILE %q: no PEM certificates parsed", caPath)
+	}
+	clientCert, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		log.Fatalf("load TLS client cert/key (%q, %q): %v", certPath, keyPath, err)
+	}
+	tlsCfg := &tls.Config{
+		RootCAs:      caPool,
+		Certificates: []tls.Certificate{clientCert},
+		MinVersion:   tls.VersionTLS12,
+	}
 	return dialConfig{
-		grpcOpts: []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())},
+		grpcOpts: []grpc.DialOption{grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg))},
 	}
 }
 
@@ -51,11 +94,14 @@ type MPCSigningClient struct {
 
 // NewMPCSigningClient dials mpc-signing-service at target (e.g.
 // "dns:///localhost:9091") and returns a client implementing grpcclient.MPCSigner.
-func NewMPCSigningClient(target string, opts ...DialOption) (*MPCSigningClient, error) {
+// When devMode is false the connection uses mTLS with material from
+// TLS_CA_CERT_FILE / TLS_CLIENT_CERT_FILE / TLS_CLIENT_KEY_FILE; when devMode
+// is true it falls back to insecure plaintext for the local harness.
+func NewMPCSigningClient(target string, devMode bool, opts ...DialOption) (*MPCSigningClient, error) {
 	if target == "" {
 		return nil, fmt.Errorf("dial mpc-signing-service: empty target")
 	}
-	cfg := defaultDialConfig()
+	cfg := defaultDialConfig(devMode)
 	for _, o := range opts {
 		o(&cfg)
 	}
@@ -101,11 +147,14 @@ type GatewayClient struct {
 
 // NewGatewayClient dials blockchain-gateway at target (e.g.
 // "dns:///localhost:9092") and returns a client implementing grpcclient.GatewayClient.
-func NewGatewayClient(target string, opts ...DialOption) (*GatewayClient, error) {
+// When devMode is false the connection uses mTLS with material from
+// TLS_CA_CERT_FILE / TLS_CLIENT_CERT_FILE / TLS_CLIENT_KEY_FILE; when devMode
+// is true it falls back to insecure plaintext for the local harness.
+func NewGatewayClient(target string, devMode bool, opts ...DialOption) (*GatewayClient, error) {
 	if target == "" {
 		return nil, fmt.Errorf("dial blockchain-gateway: empty target")
 	}
-	cfg := defaultDialConfig()
+	cfg := defaultDialConfig(devMode)
 	for _, o := range opts {
 		o(&cfg)
 	}

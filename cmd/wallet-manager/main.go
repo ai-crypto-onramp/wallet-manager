@@ -221,11 +221,11 @@ func initSignerAndGateway(cfg config.Config, devMode bool) (grpcclient.MPCSigner
 	if cfg.BlockchainGatewayURL == "" {
 		log.Fatalf("BLOCKCHAIN_GATEWAY_URL required in production mode — set DEV_MODE=1 for local dev")
 	}
-	realSigner, err := clients.NewMPCSigningClient(cfg.MPCSigningURL)
+	realSigner, err := clients.NewMPCSigningClient(cfg.MPCSigningURL, devMode)
 	if err != nil {
 		return nil, nil, fmt.Errorf("dial mpc-signing-service %q: %w", cfg.MPCSigningURL, err)
 	}
-	realGw, err := clients.NewGatewayClient(cfg.BlockchainGatewayURL)
+	realGw, err := clients.NewGatewayClient(cfg.BlockchainGatewayURL, devMode)
 	if err != nil {
 		realSigner.Close()
 		return nil, nil, fmt.Errorf("dial blockchain-gateway %q: %w", cfg.BlockchainGatewayURL, err)

@@ -75,7 +75,7 @@ func TestMPCSigningClientSignHappyPath(t *testing.T) {
 	target, dialOpt, stop := startMPCServer(t, srv)
 	defer stop()
 
-	c, err := NewMPCSigningClient(target, WithGRPCDialOptions(dialOpt, grpc.WithTransportCredentials(insecure.NewCredentials())))
+	c, err := NewMPCSigningClient(target, true, WithGRPCDialOptions(dialOpt, grpc.WithTransportCredentials(insecure.NewCredentials())))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestMPCSigningClientSignError(t *testing.T) {
 	target, dialOpt, stop := startMPCServer(t, srv)
 	defer stop()
 
-	c, err := NewMPCSigningClient(target, WithGRPCDialOptions(dialOpt, grpc.WithTransportCredentials(insecure.NewCredentials())))
+	c, err := NewMPCSigningClient(target, true, WithGRPCDialOptions(dialOpt, grpc.WithTransportCredentials(insecure.NewCredentials())))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestMPCSigningClientSignError(t *testing.T) {
 
 func TestMPCSigningClientDialError(t *testing.T) {
 	// An empty target with no dialer produces a resolver error synchronously.
-	if _, err := NewMPCSigningClient(""); err == nil {
+	if _, err := NewMPCSigningClient("", true); err == nil {
 		t.Error("expected dial error for empty target")
 	}
 }
@@ -123,7 +123,7 @@ func TestGatewayClientBroadcastHappyPath(t *testing.T) {
 	target, dialOpt, stop := startGatewayServer(t, srv)
 	defer stop()
 
-	c, err := NewGatewayClient(target, WithGRPCDialOptions(dialOpt, grpc.WithTransportCredentials(insecure.NewCredentials())))
+	c, err := NewGatewayClient(target, true, WithGRPCDialOptions(dialOpt, grpc.WithTransportCredentials(insecure.NewCredentials())))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestGatewayClientBroadcastError(t *testing.T) {
 	target, dialOpt, stop := startGatewayServer(t, srv)
 	defer stop()
 
-	c, err := NewGatewayClient(target, WithGRPCDialOptions(dialOpt, grpc.WithTransportCredentials(insecure.NewCredentials())))
+	c, err := NewGatewayClient(target, true, WithGRPCDialOptions(dialOpt, grpc.WithTransportCredentials(insecure.NewCredentials())))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestGatewayClientBroadcastError(t *testing.T) {
 }
 
 func TestGatewayClientDialError(t *testing.T) {
-	if _, err := NewGatewayClient(""); err == nil {
+	if _, err := NewGatewayClient("", true); err == nil {
 		t.Error("expected dial error for empty target")
 	}
 }
@@ -170,7 +170,7 @@ func TestCloseIdempotent(t *testing.T) {
 	target, dialOpt, stop := startMPCServer(t, srv)
 	defer stop()
 
-	c, err := NewMPCSigningClient(target, WithGRPCDialOptions(dialOpt, grpc.WithTransportCredentials(insecure.NewCredentials())))
+	c, err := NewMPCSigningClient(target, true, WithGRPCDialOptions(dialOpt, grpc.WithTransportCredentials(insecure.NewCredentials())))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,5 +179,16 @@ func TestCloseIdempotent(t *testing.T) {
 	}
 	if err := c.Close(); err != nil {
 		t.Errorf("second close: %v", err)
+	}
+}
+
+// TestDefaultDialConfigDevModeIsInsecure verifies the DEV_MODE=1 default is
+// plaintext insecure credentials so the local harness keeps working. The
+// production path (devMode=false) fatals via log.Fatalf when TLS_* env vars
+// are missing and is therefore not unit-testable in-process.
+func TestDefaultDialConfigDevModeIsInsecure(t *testing.T) {
+	cfg := defaultDialConfig(true)
+	if len(cfg.grpcOpts) != 1 {
+		t.Fatalf("expected exactly one default dial option, got %d", len(cfg.grpcOpts))
 	}
 }

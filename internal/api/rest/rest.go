@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ai-crypto-onramp/wallet-manager/internal/balance"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/authtoken"
 	"github.com/ai-crypto-onramp/wallet-manager/internal/funding"
 	"github.com/ai-crypto-onramp/wallet-manager/internal/nonce"
 	"github.com/ai-crypto-onramp/wallet-manager/internal/storage"
@@ -38,6 +39,8 @@ func NewRouter(d Deps) http.Handler {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(30 * time.Second))
+	secret, bypass := authtoken.SecretFromEnv()
+	r.Use(authtoken.Middleware(secret, bypass))
 
 	r.Get("/healthz", healthz)
 
