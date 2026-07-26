@@ -8,6 +8,7 @@ import (
 	"github.com/ai-crypto-onramp/wallet-manager/internal/storage"
 	"github.com/ai-crypto-onramp/wallet-manager/internal/storage/memstore"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 func newSvc(t *testing.T) (*Service, *memstore.Store) {
@@ -39,12 +40,12 @@ func TestSelectForAmount(t *testing.T) {
 		struct{ outpoint, value string }{"b", "200"},
 		struct{ outpoint, value string }{"c", "50"},
 	)
-	ops, total, err := svc.SelectForAmount(ctx, wID, 250)
+	ops, total, err := svc.SelectForAmount(ctx, wID, decimal.NewFromInt(250))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if total < 250 {
-		t.Errorf("expected total>=250, got %d", total)
+	if total.LessThan(decimal.NewFromInt(250)) {
+		t.Errorf("expected total>=250, got %s", total.String())
 	}
 	if len(ops) == 0 {
 		t.Fatal("expected at least one selected outpoint")
@@ -61,14 +62,14 @@ func TestSelectForAmountInsufficient(t *testing.T) {
 	ctx := context.Background()
 	wID := uuid.New()
 	seedUTXOs(t, svc, wID, struct{ outpoint, value string }{"a", "100"})
-	if _, _, err := svc.SelectForAmount(ctx, wID, 500); err == nil {
+	if _, _, err := svc.SelectForAmount(ctx, wID, decimal.NewFromInt(500)); err == nil {
 		t.Error("expected insufficient funds error")
 	}
 }
 
 func TestSelectForAmountEmpty(t *testing.T) {
 	svc, _ := newSvc(t)
-	if _, _, err := svc.SelectForAmount(context.Background(), uuid.New(), 1); err == nil {
+	if _, _, err := svc.SelectForAmount(context.Background(), uuid.New(), decimal.NewFromInt(1)); err == nil {
 		t.Error("expected insufficient funds on empty wallet")
 	}
 }
@@ -90,7 +91,7 @@ func TestSelectForAmountNoDoubleSpendUnderConcurrency(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			ops, _, err := svc.SelectForAmount(ctx, wID, 200)
+			ops, _, err := svc.SelectForAmount(ctx, wID, decimal.NewFromInt(200))
 			if err != nil {
 				errs <- err
 				return
@@ -129,7 +130,7 @@ func TestMarkSpentAndUnlock(t *testing.T) {
 	ctx := context.Background()
 	wID := uuid.New()
 	seedUTXOs(t, svc, wID, struct{ outpoint, value string }{"a", "100"})
-	ops, _, _ := svc.SelectForAmount(ctx, wID, 50)
+	ops, _, _ := svc.SelectForAmount(ctx, wID, decimal.NewFromInt(50))
 	if err := svc.MarkSpent(ctx, ops, "txhash1"); err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +154,7 @@ func TestRestoreOnReorg(t *testing.T) {
 	ctx := context.Background()
 	wID := uuid.New()
 	seedUTXOs(t, svc, wID, struct{ outpoint, value string }{"a", "100"})
-	ops, _, _ := svc.SelectForAmount(ctx, wID, 50)
+	ops, _, _ := svc.SelectForAmount(ctx, wID, decimal.NewFromInt(50))
 	_ = svc.MarkSpent(ctx, ops, "txh")
 	// reorg restores spent -> free
 	if err := svc.RestoreOnReorg(ctx, ops); err != nil {

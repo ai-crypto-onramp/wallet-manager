@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strconv"
 	"time"
 
 	"github.com/ai-crypto-onramp/wallet-manager/internal/audit"
@@ -18,6 +17,7 @@ import (
 	"github.com/ai-crypto-onramp/wallet-manager/internal/utxo"
 	"github.com/ai-crypto-onramp/wallet-manager/internal/wallet"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 // CreateRequest is the REST payload for POST /v1/withdrawals.
@@ -155,8 +155,12 @@ func (s *Service) ConstructAndSign(ctx context.Context, id uuid.UUID) error {
 		reservedNonce = n
 		_ = s.Store.UpdateWithdrawalNonce(ctx, id, n)
 	} else if w.Chain == wallet.ChainBitcoin {
-		amountInt, _ := strconv.ParseInt(wr.Amount, 10, 64)
-		ops, _, err := s.UTXOs.SelectForAmount(ctx, wr.WalletID, amountInt)
+		amount, err := decimal.NewFromString(wr.Amount)
+		if err != nil {
+			_ = s.Nonces.RollbackNonce(ctx, wr.WalletID, w.Chain, reservedNonce)
+			return fmt.Errorf("parse btc amount: %w", err)
+		}
+		ops, _, err := s.UTXOs.SelectForAmount(ctx, wr.WalletID, amount)
 		if err != nil {
 			_ = s.Nonces.RollbackNonce(ctx, wr.WalletID, w.Chain, reservedNonce)
 			return fmt.Errorf("select utxos: %w", err)

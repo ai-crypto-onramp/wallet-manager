@@ -36,6 +36,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/shopspring/decimal"
 	"golang.org/x/crypto/ed25519"
 	"golang.org/x/crypto/sha3"
 )
@@ -120,19 +121,22 @@ func buildBTCUnsignedTx(w *wallet.Wallet, wr *storage.WithdrawalRequest, outpoin
 	if len(outpoints) == 0 {
 		return nil, errors.New("btc: no reserved outpoints")
 	}
-	amount, err := strconv.ParseInt(wr.Amount, 10, 64)
+	amount, err := decimal.NewFromString(wr.Amount)
 	if err != nil {
 		return nil, fmt.Errorf("btc amount parse: %w", err)
 	}
+	// wire.TxOut.Value is denominated in satoshis (int64). wr.Amount is a
+	// decimal string in minor units; round to int64 for the wire format.
+	satoshis := amount.IntPart()
 	net := &chaincfg.MainNetParams
 	toScript, err := btcAddrScript(wr.ToAddress, net)
 	if err != nil {
 		return nil, fmt.Errorf("btc to_address: %w", err)
 	}
 	tx := wire.NewMsgTx(2)
-	tx.AddTxOut(&wire.TxOut{Value: amount, PkScript: toScript})
+	tx.AddTxOut(&wire.TxOut{Value: satoshis, PkScript: toScript})
 	fetcher := txscript.NewMultiPrevOutFetcher(nil)
-	perInputAmount := amount / int64(len(outpoints))
+	perInputAmount := satoshis / int64(len(outpoints))
 	for _, op := range outpoints {
 		prevTxHash, vout, err := parseOutpoint(op)
 		if err != nil {

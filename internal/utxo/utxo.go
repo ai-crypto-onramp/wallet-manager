@@ -6,11 +6,11 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strconv"
 	"sync"
 
 	"github.com/ai-crypto-onramp/wallet-manager/internal/storage"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 // Service manages the BTC UTXO set per wallet.
@@ -26,29 +26,29 @@ func NewService(st storage.Store) *Service {
 // SelectForAmount greedily selects free UTXOs whose total value >= amount
 // (minor units), atomically marks them locked, and returns the selected
 // outpoints and their total. Returns an error if insufficient funds.
-func (s *Service) SelectForAmount(ctx context.Context, walletID uuid.UUID, amount int64) ([]string, int64, error) {
+func (s *Service) SelectForAmount(ctx context.Context, walletID uuid.UUID, amount decimal.Decimal) ([]string, decimal.Decimal, error) {
 	free, err := s.Store.ListFreeUTXOs(ctx, walletID)
 	if err != nil {
-		return nil, 0, err
+		return nil, decimal.Zero, err
 	}
 	// greedy largest-first for fewer inputs
 	sort.Slice(free, func(i, j int) bool {
-		return parseVal(free[i].Value) > parseVal(free[j].Value)
+		return parseDec(free[i].Value).GreaterThan(parseDec(free[j].Value))
 	})
 	var selected []string
-	var total int64
+	total := decimal.Zero
 	for _, u := range free {
-		if total >= amount {
+		if total.GreaterThanOrEqual(amount) {
 			break
 		}
 		selected = append(selected, u.Outpoint)
-		total += parseVal(u.Value)
+		total = total.Add(parseDec(u.Value))
 	}
-	if total < amount {
-		return nil, 0, fmt.Errorf("insufficient funds: need %d have %d", amount, total)
+	if total.LessThan(amount) {
+		return nil, decimal.Zero, fmt.Errorf("insufficient funds: need %s have %s", amount.String(), total.String())
 	}
 	if err := s.Store.LockUTXOs(ctx, selected); err != nil {
-		return nil, 0, fmt.Errorf("lock utxos: %w", err)
+		return nil, decimal.Zero, fmt.Errorf("lock utxos: %w", err)
 	}
 	return selected, total, nil
 }
@@ -78,12 +78,19 @@ func (s *Service) TrackUTXO(ctx context.Context, u *storage.UTXO) error {
 	return s.Store.InsertUTXO(ctx, u)
 }
 
-func parseVal(s string) int64 {
-	n, err := strconv.ParseInt(s, 10, 64)
-	if err != nil {
-		return 0
+// parseDec parses a fixed-point decimal string into decimal.Decimal. Returns
+// zero on empty/invalid input. Money is stored as NUMERIC(38,18) in Postgres
+// and string in memstore; int64 parsing would overflow for large BTC satoshi
+// amounts.
+func parseDec(s string) decimal.Decimal {
+	if s == "" {
+		return decimal.Zero
 	}
-	return n
+	d, err := decimal.NewFromString(s)
+	if err != nil {
+		return decimal.Zero
+	}
+	return d
 }
 
 // SelectMutex is a per-wallet selection mutex used by tests to assert
