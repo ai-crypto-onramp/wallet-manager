@@ -13,6 +13,7 @@ package deriver
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -77,6 +78,36 @@ func (r *Registry) For(chain Chain) (Deriver, error) {
 		return r.btc, nil
 	}
 	return nil, fmt.Errorf("no deriver for chain %q", chain)
+}
+
+// BTCPubKeyHashFor derives the 20-byte P2WPKH pubkey hash and 33-byte
+// compressed pubkey for the given BTC derivation path. The path must be of
+// the form m/84'/0'/0'/<change>/<index>. Used by the withdrawal builder to
+// compute the real sighash against the wallet's UTXO script.
+func (r *Registry) BTCPubKeyHashFor(path string) ([20]byte, []byte, error) {
+	change, index, err := parseBTCPath(path)
+	if err != nil {
+		return [20]byte{}, nil, fmt.Errorf("parse btc derivation path %q: %w", path, err)
+	}
+	return r.btc.PubKeyHashFor(change, index)
+}
+
+// parseBTCPath extracts the non-hardened change and index from a BIP-84
+// derivation path of the form m/84'/0'/0'/<change>/<index>.
+func parseBTCPath(path string) (int, int, error) {
+	parts := strings.Split(strings.TrimSpace(path), "/")
+	if len(parts) != 6 || parts[0] != "m" {
+		return 0, 0, fmt.Errorf("expected m/84'/0'/0'/<change>/<index>, got %q", path)
+	}
+	change, err := strconv.Atoi(parts[4])
+	if err != nil {
+		return 0, 0, fmt.Errorf("parse change: %w", err)
+	}
+	index, err := strconv.Atoi(parts[5])
+	if err != nil {
+		return 0, 0, fmt.Errorf("parse index: %w", err)
+	}
+	return change, index, nil
 }
 
 // nonHardened converts a derivation index to uint32, rejecting values outside

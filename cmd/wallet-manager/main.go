@@ -104,6 +104,10 @@ func run() error {
 	}
 
 	withdrawalSvc := withdrawal.NewService(st, walletSvc, nonceSvc, utxoSvc, policyClient, signer, gw, keymapSvc, emitter)
+	keyResolver := withdrawal.NewDeriverKeyResolver(st, registry)
+	withdrawalSvc.BTCKeys = keyResolver
+	withdrawalSvc.SolanaKeys = keyResolver
+	withdrawalSvc.SolanaBlockhash = initSolanaBlockhashFetcher(devMode)
 	balanceSvc.UTXORestore = utxoSvc.RestoreOnReorg
 	balanceSvc.OnConfirmedDecrease = func(walletID uuid.UUID, asset string) {
 		go func() {
@@ -242,4 +246,22 @@ func splitCSV(s string) []string {
 		}
 	}
 	return out
+}
+
+// initSolanaBlockhashFetcher wires the Solana recent-blockhash fetcher from
+// the SOLANA_RPC_URL env var. In DEV_MODE=1 with no URL set, it returns nil
+// so the withdrawal builder falls back to a placeholder blockhash with a
+// warning. In production, a missing URL is fatal — every Solana withdrawal
+// would otherwise produce an invalid signature.
+func initSolanaBlockhashFetcher(devMode bool) withdrawal.SolanaBlockhashFetcher {
+	url := os.Getenv("SOLANA_RPC_URL")
+	if url == "" {
+		if devMode {
+			log.Printf("DEV_MODE=1: SOLANA_RPC_URL unset — Solana withdrawals will use a placeholder blockhash (NOT FOR PRODUCTION)")
+			return nil
+		}
+		log.Fatalf("SOLANA_RPC_URL required in production mode — set DEV_MODE=1 for local dev")
+	}
+	log.Printf("solana blockhash fetcher: %s", url)
+	return withdrawal.NewSolanaRPCBlockhashFetcher(url)
 }

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/ai-crypto-onramp/wallet-manager/internal/cache"
+	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/btcutil/bech32"
 	"github.com/btcsuite/btcd/btcutil/hdkeychain"
@@ -80,32 +81,57 @@ func (d *BTCDeriver) makeAddr(_ uuid.UUID, addr, path string, index, change int)
 }
 
 func (d *BTCDeriver) deriveUncached(index, change int) (string, error) {
-	acc, err := hdkeychain.NewKeyFromString(d.xpub)
-	if err != nil {
-		return "", fmt.Errorf("parse xpub: %w", err)
-	}
-	changeIdx, err := nonHardened(change)
+	pub, err := d.deriveChildPubKey(index, change)
 	if err != nil {
 		return "", err
-	}
-	changeBranch, err := acc.Derive(changeIdx)
-	if err != nil {
-		return "", fmt.Errorf("derive change chain %d: %w", change, err)
-	}
-	childIdx, err := nonHardened(index)
-	if err != nil {
-		return "", err
-	}
-	child, err := changeBranch.Derive(childIdx)
-	if err != nil {
-		return "", fmt.Errorf("derive index %d: %w", index, err)
-	}
-	pub, err := child.ECPubKey()
-	if err != nil {
-		return "", fmt.Errorf("ec pubkey: %w", err)
 	}
 	witness := append([]byte{0x00}, btcutil.Hash160(pub.SerializeCompressed())...)
 	return bech32Address("bc", witness)
+}
+
+// deriveChildPubKey derives the compressed secp256k1 public key at
+// m/<change>/<index> under the account xpub.
+func (d *BTCDeriver) deriveChildPubKey(index, change int) (*btcec.PublicKey, error) {
+	acc, err := hdkeychain.NewKeyFromString(d.xpub)
+	if err != nil {
+		return nil, fmt.Errorf("parse xpub: %w", err)
+	}
+	changeIdx, err := nonHardened(change)
+	if err != nil {
+		return nil, err
+	}
+	changeBranch, err := acc.Derive(changeIdx)
+	if err != nil {
+		return nil, fmt.Errorf("derive change chain %d: %w", change, err)
+	}
+	childIdx, err := nonHardened(index)
+	if err != nil {
+		return nil, err
+	}
+	child, err := changeBranch.Derive(childIdx)
+	if err != nil {
+		return nil, fmt.Errorf("derive index %d: %w", index, err)
+	}
+	pub, err := child.ECPubKey()
+	if err != nil {
+		return nil, fmt.Errorf("ec pubkey: %w", err)
+	}
+	return pub, nil
+}
+
+// PubKeyHashFor returns the 20-byte P2WPKH witness program hash (RIPEMD-160
+// of SHA-256 of the compressed pubkey) and the 33-byte compressed pubkey
+// for the derived child at (change, index). Used by the withdrawal builder
+// to compute the real sighash against the wallet's UTXO script.
+func (d *BTCDeriver) PubKeyHashFor(change, index int) ([20]byte, []byte, error) {
+	pub, err := d.deriveChildPubKey(index, change)
+	if err != nil {
+		return [20]byte{}, nil, err
+	}
+	compressed := pub.SerializeCompressed()
+	var hash [20]byte
+	copy(hash[:], btcutil.Hash160(compressed))
+	return hash, compressed, nil
 }
 
 // bech32Address converts a 21-byte witness program (version+20-byte hash) into

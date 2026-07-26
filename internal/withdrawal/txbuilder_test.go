@@ -2,6 +2,8 @@ package withdrawal
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"math/big"
 	"testing"
 
@@ -9,6 +11,9 @@ import (
 	"github.com/ai-crypto-onramp/wallet-manager/internal/wallet"
 	"github.com/btcsuite/btcd/btcec/v2"
 	btcecdsa "github.com/btcsuite/btcd/btcec/v2/ecdsa"
+	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/btcutil/base58"
+	"github.com/btcsuite/btcd/btcutil/hdkeychain"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/ed25519"
@@ -40,7 +45,7 @@ func sampleEVMWithdrawal(t *testing.T) (*wallet.Wallet, *storage.WithdrawalReque
 
 func TestBuildEVMUnsignedTx_SigningHashIs32Bytes(t *testing.T) {
 	w, wr := sampleEVMWithdrawal(t)
-	utx, err := BuildUnsignedTx(w, wr, 7, nil)
+	utx, err := BuildUnsignedTx(context.Background(), w, wr, 7, nil, BuildOpts{})
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -51,7 +56,7 @@ func TestBuildEVMUnsignedTx_SigningHashIs32Bytes(t *testing.T) {
 		t.Fatalf("expected 32-byte keccak signing hash, got %d bytes", len(utx.Payload))
 	}
 	// The signing hash must be deterministic for the same inputs.
-	utx2, _ := BuildUnsignedTx(w, wr, 7, nil)
+	utx2, _ := BuildUnsignedTx(context.Background(), w, wr, 7, nil, BuildOpts{})
 	if !bytes.Equal(utx.Payload, utx2.Payload) {
 		t.Error("expected deterministic signing hash for identical inputs")
 	}
@@ -60,7 +65,7 @@ func TestBuildEVMUnsignedTx_SigningHashIs32Bytes(t *testing.T) {
 func TestEVMAssemble_ProducesValidSignedTx(t *testing.T) {
 	w, wr := sampleEVMWithdrawal(t)
 	nonce := int64(5)
-	utx, err := BuildUnsignedTx(w, wr, nonce, nil)
+	utx, err := BuildUnsignedTx(context.Background(), w, wr, nonce, nil, BuildOpts{})
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -93,7 +98,7 @@ func TestEVMAssemble_ProducesValidSignedTx(t *testing.T) {
 
 func TestEVMAssemble_RejectsMalformedSignature(t *testing.T) {
 	w, wr := sampleEVMWithdrawal(t)
-	utx, _ := BuildUnsignedTx(w, wr, 0, nil)
+	utx, _ := BuildUnsignedTx(context.Background(), w, wr, 0, nil, BuildOpts{})
 	if _, err := utx.Assemble([]byte{0x01, 0x02}); err == nil {
 		t.Error("expected error on short signature")
 	}
@@ -107,9 +112,9 @@ func TestEVMChainIDReplayProtection(t *testing.T) {
 	prev := new(big.Int).Set(EVMChainID)
 	defer func() { EVMChainID = prev }()
 	EVMChainID = big.NewInt(137) // polygon
-	utx1, _ := BuildUnsignedTx(w, wr, 1, nil)
+	utx1, _ := BuildUnsignedTx(context.Background(), w, wr, 1, nil, BuildOpts{})
 	EVMChainID = big.NewInt(1) // ethereum
-	utx2, _ := BuildUnsignedTx(w, wr, 1, nil)
+	utx2, _ := BuildUnsignedTx(context.Background(), w, wr, 1, nil, BuildOpts{})
 	if bytes.Equal(utx1.Payload, utx2.Payload) {
 		t.Error("expected different signing hashes for different chain ids (EIP-155)")
 	}
@@ -126,7 +131,7 @@ func TestBuildBTCUnsignedTx_SighashPerInput(t *testing.T) {
 		State:     "WHITELISTED",
 	}
 	outpoints := []string{validOutpointA, validOutpointB}
-	utx, err := BuildUnsignedTx(w, wr, -1, outpoints)
+	utx, err := BuildUnsignedTx(context.Background(), w, wr, -1, outpoints, BuildOpts{})
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -173,7 +178,7 @@ func TestBuildBTCUnsignedTx_SighashPerInput(t *testing.T) {
 func TestBuildBTCUnsignedTx_RejectsEmptyOutpoints(t *testing.T) {
 	w := &wallet.Wallet{ID: uuid.New(), Chain: wallet.ChainBitcoin, Type: wallet.WalletTypeHot, State: wallet.WalletStateActive}
 	wr := &storage.WithdrawalRequest{ID: uuid.New(), WalletID: w.ID, ToAddress: validBTCA, Asset: "btc", Amount: "1", State: "WHITELISTED"}
-	if _, err := BuildUnsignedTx(w, wr, -1, nil); err == nil {
+	if _, err := BuildUnsignedTx(context.Background(), w, wr, -1, nil, BuildOpts{}); err == nil {
 		t.Error("expected error on empty outpoints")
 	}
 }
@@ -190,7 +195,7 @@ func TestBuildSolanaUnsignedTx_MessageHashIs32Bytes(t *testing.T) {
 		Amount:    "1000",
 		State:     "WHITELISTED",
 	}
-	utx, err := BuildUnsignedTx(w, wr, -1, nil)
+	utx, err := BuildUnsignedTx(context.Background(), w, wr, -1, nil, BuildOpts{})
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -244,4 +249,158 @@ func TestSecp256k1CompactSignatureRoundTrip(t *testing.T) {
 	if !bytes.Equal(recovered.SerializeCompressed(), priv.PubKey().SerializeCompressed()) {
 		t.Fatal("recovered pubkey does not match signer pubkey")
 	}
+}
+
+// TestBuildBTCUnsignedTx_RealPubKeyHash verifies that when BuildOpts carries
+// the wallet's real P2WPKH pubkey hash + compressed pubkey, the sighash is
+// computed against that real hash (not the zero placeholder) and the
+// assembled witness stack carries the real pubkey. The sighash MUST differ
+// from the placeholder-path sighash; otherwise the fix is a no-op.
+func TestBuildBTCUnsignedTx_RealPubKeyHash(t *testing.T) {
+	w := &wallet.Wallet{ID: uuid.New(), Chain: wallet.ChainBitcoin, Type: wallet.WalletTypeHot, State: wallet.WalletStateActive}
+	wr := &storage.WithdrawalRequest{ID: uuid.New(), WalletID: w.ID, ToAddress: validBTCA, Asset: "btc", Amount: "120", State: "WHITELISTED"}
+	outpoints := []string{validOutpointA, validOutpointB}
+
+	placeholderUTx, err := BuildUnsignedTx(context.Background(), w, wr, -1, outpoints, BuildOpts{})
+	if err != nil {
+		t.Fatalf("build placeholder: %v", err)
+	}
+
+	// Derive a real pubkey hash from the canonical BIP-32 test xpub at
+	// m/84'/0'/0'/0/0 — the same vector the deriver tests assert against.
+	const btcXpub = "xpub6C1HVMz946r433QEjZGpYYWYcspxXXBPys5PBGkmQboRXE6RLfFiStEkKbWKCZaPgDrzZh9nUEunxuiuy6MNdw23du2Ek7GoKYMJVH8eK5E"
+	acc, err := hdkeychain.NewKeyFromString(btcXpub)
+	if err != nil {
+		t.Fatalf("parse xpub: %v", err)
+	}
+	changeBranch, err := acc.Derive(0)
+	if err != nil {
+		t.Fatalf("derive change: %v", err)
+	}
+	child, err := changeBranch.Derive(0)
+	if err != nil {
+		t.Fatalf("derive index: %v", err)
+	}
+	pub, err := child.ECPubKey()
+	if err != nil {
+		t.Fatalf("ec pubkey: %v", err)
+	}
+	compressed := pub.SerializeCompressed()
+	var realHash [20]byte
+	copy(realHash[:], btcutil.Hash160(compressed))
+
+	realUTx, err := BuildUnsignedTx(context.Background(), w, wr, -1, outpoints, BuildOpts{BTC: BTCKeys{PubKeyHash: realHash, CompressedPubKey: compressed}})
+	if err != nil {
+		t.Fatalf("build real: %v", err)
+	}
+	if bytes.Equal(realUTx.Payload, placeholderUTx.Payload) {
+		t.Fatal("expected real pubkey hash to produce a different sighash than the zero placeholder")
+	}
+	if len(realUTx.Payload) != 64 {
+		t.Fatalf("expected 64-byte sighash concat, got %d", len(realUTx.Payload))
+	}
+
+	// Assemble and verify the witness stack carries the real compressed pubkey.
+	sig := make([]byte, 128)
+	for i := range sig {
+		sig[i] = byte(i + 1)
+	}
+	signed, err := realUTx.Assemble(sig)
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	var decoded wire.MsgTx
+	if err := decoded.Deserialize(bytes.NewReader(signed)); err != nil {
+		t.Fatalf("deserialize: %v", err)
+	}
+	for i, in := range decoded.TxIn {
+		if len(in.Witness) != 2 {
+			t.Fatalf("input %d: expected 2 witness items, got %d", i, len(in.Witness))
+		}
+		if !bytes.Equal(in.Witness[1], compressed) {
+			t.Errorf("input %d: witness pubkey mismatch — expected real compressed pubkey", i)
+		}
+	}
+}
+
+// TestBuildSolanaUnsignedTx_RealFromAndBlockhash verifies that the real
+// `from` pubkey and a real blockhash fetched from the RPC are embedded in
+// the signed message, and that a fetcher error (non-ErrNoSolanaRPC) aborts
+// the build.
+func TestBuildSolanaUnsignedTx_RealFromAndBlockhash(t *testing.T) {
+	w := &wallet.Wallet{ID: uuid.New(), Chain: wallet.ChainSolana, Type: wallet.WalletTypeHot, State: wallet.WalletStateActive}
+	// Real `from` = 32 bytes [0x01..0x20], base58-encoded.
+	var realFrom [32]byte
+	for i := range realFrom {
+		realFrom[i] = byte(i + 1)
+	}
+	fromB58 := base58.Encode(realFrom[:])
+	// `to` = system program (32 zero bytes).
+	wr := &storage.WithdrawalRequest{
+		ID:        uuid.New(),
+		WalletID:  w.ID,
+		ToAddress: "11111111111111111111111111111111",
+		Asset:     "sol",
+		Amount:    "1000",
+		State:     "WHITELISTED",
+	}
+
+	// Real blockhash = 32 bytes [0xa0..0xbf].
+	var realBH [32]byte
+	for i := range realBH {
+		realBH[i] = byte(0xa0 + i)
+	}
+	fetcher := &stubBlockhashFetcher{hash: realBH}
+
+	utx, err := BuildUnsignedTx(context.Background(), w, wr, -1, nil, BuildOpts{
+		Solana:          SolanaKeys{From: realFrom},
+		SolanaBlockhash: fetcher,
+	})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	// The serialized Solana message contains the account table [from, to,
+	// system program] right after the 3-byte header + 1-byte account count.
+	// Verify `from` is embedded at offset 4.
+	gotFrom := utx.Payload[4 : 4+32]
+	if !bytes.Equal(gotFrom, realFrom[:]) {
+		t.Errorf("expected real from pubkey embedded in message, got %x", gotFrom)
+	}
+	// Blockhash follows the account table (3 accounts * 32 bytes) at offset
+	// 4 + 96 = 100.
+	gotBH := utx.Payload[100 : 100+32]
+	if !bytes.Equal(gotBH, realBH[:]) {
+		t.Errorf("expected real blockhash embedded in message, got %x", gotBH)
+	}
+	_ = fromB58
+}
+
+// TestBuildSolanaUnsignedTx_FetcherErrorAborts verifies that a non-ErrNoSolana
+// fetcher error aborts the build rather than silently using a placeholder.
+func TestBuildSolanaUnsignedTx_FetcherErrorAborts(t *testing.T) {
+	w := &wallet.Wallet{ID: uuid.New(), Chain: wallet.ChainSolana, Type: wallet.WalletTypeHot, State: wallet.WalletStateActive}
+	var realFrom [32]byte
+	for i := range realFrom {
+		realFrom[i] = byte(i + 1)
+	}
+	wr := &storage.WithdrawalRequest{
+		ID: uuid.New(), WalletID: w.ID, ToAddress: "11111111111111111111111111111111",
+		Asset: "sol", Amount: "1000", State: "WHITELISTED",
+	}
+	fetcher := &stubBlockhashFetcher{err: errors.New("rpc timeout")}
+	if _, err := BuildUnsignedTx(context.Background(), w, wr, -1, nil, BuildOpts{
+		Solana:          SolanaKeys{From: realFrom},
+		SolanaBlockhash: fetcher,
+	}); err == nil {
+		t.Fatal("expected build to fail when blockhash fetcher returns a non-ErrNoSolana error")
+	}
+}
+
+type stubBlockhashFetcher struct {
+	hash [32]byte
+	err  error
+}
+
+func (s *stubBlockhashFetcher) FetchRecentBlockhash(_ context.Context) ([32]byte, error) {
+	return s.hash, s.err
 }

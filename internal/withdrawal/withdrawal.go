@@ -30,15 +30,18 @@ type CreateRequest struct {
 
 // Service implements the withdrawal saga.
 type Service struct {
-	Store     storage.Store
-	Wallets   *wallet.Service
-	Nonces    *nonce.Service
-	UTXOs     *utxo.Service
-	Policy    policy.Client
-	Signer    grpcclient.MPCSigner
-	Gateway   grpcclient.GatewayClient
-	KeyLookup KeyResolver
-	Audit     audit.Emitter
+	Store           storage.Store
+	Wallets         *wallet.Service
+	Nonces          *nonce.Service
+	UTXOs           *utxo.Service
+	Policy          policy.Client
+	Signer          grpcclient.MPCSigner
+	Gateway         grpcclient.GatewayClient
+	KeyLookup       KeyResolver
+	Audit           audit.Emitter
+	BTCKeys         BTCKeysResolver
+	SolanaKeys      SolanaKeysResolver
+	SolanaBlockhash SolanaBlockhashFetcher
 }
 
 // KeyResolver resolves a wallet's active key_id (wired to keymapping.Service).
@@ -46,9 +49,46 @@ type KeyResolver interface {
 	ResolveActiveKeyID(ctx context.Context, walletID uuid.UUID) (string, error)
 }
 
+// BTCKeysResolver resolves the wallet's real P2WPKH pubkey hash and
+// compressed pubkey for the UTXOs being spent. Wired to the deriver
+// registry in production; nil in tests/DEV_MODE without an xpub.
+type BTCKeysResolver interface {
+	BTCPubKeyHash(ctx context.Context, walletID uuid.UUID) (BTCKeys, error)
+}
+
+// SolanaKeysResolver resolves the wallet's real ed25519 `from` pubkey.
+// Wired to the wallet store's active address record in production; nil in
+// tests/DEV_MODE without a derived address.
+type SolanaKeysResolver interface {
+	SolanaFrom(ctx context.Context, walletID uuid.UUID) (SolanaKeys, error)
+}
+
 // NewService constructs a withdrawal Service.
 func NewService(st storage.Store, ws *wallet.Service, ns *nonce.Service, us *utxo.Service, pc policy.Client, signer grpcclient.MPCSigner, gw grpcclient.GatewayClient, kr KeyResolver, em audit.Emitter) *Service {
 	return &Service{Store: st, Wallets: ws, Nonces: ns, UTXOs: us, Policy: pc, Signer: signer, Gateway: gw, KeyLookup: kr, Audit: em}
+}
+
+// resolveBuildOpts assembles BuildOpts for the given wallet from the
+// configured resolvers. Missing resolvers yield zero-value fields, which the
+// builder treats as a DEV_MODE placeholder.
+func (s *Service) resolveBuildOpts(ctx context.Context, w *wallet.Wallet) (BuildOpts, error) {
+	var opts BuildOpts
+	if s.BTCKeys != nil && w.Chain == wallet.ChainBitcoin {
+		bk, err := s.BTCKeys.BTCPubKeyHash(ctx, w.ID)
+		if err != nil {
+			return BuildOpts{}, fmt.Errorf("resolve btc keys: %w", err)
+		}
+		opts.BTC = bk
+	}
+	if s.SolanaKeys != nil && w.Chain == wallet.ChainSolana {
+		sk, err := s.SolanaKeys.SolanaFrom(ctx, w.ID)
+		if err != nil {
+			return BuildOpts{}, fmt.Errorf("resolve solana keys: %w", err)
+		}
+		opts.Solana = sk
+	}
+	opts.SolanaBlockhash = s.SolanaBlockhash
+	return opts, nil
 }
 
 // Create inserts a pending withdrawal and synchronously checks the whitelist.
@@ -173,7 +213,12 @@ func (s *Service) ConstructAndSign(ctx context.Context, id uuid.UUID) error {
 		}
 	}
 
-	unsigned, err := BuildUnsignedTx(w, wr, reservedNonce, reservedOutpoints)
+	opts, err := s.resolveBuildOpts(ctx, w)
+	if err != nil {
+		s.rollback(ctx, w, reservedNonce, reservedOutpoints)
+		return fmt.Errorf("resolve build opts: %w", err)
+	}
+	unsigned, err := BuildUnsignedTx(ctx, w, wr, reservedNonce, reservedOutpoints, opts)
 	if err != nil {
 		s.rollback(ctx, w, reservedNonce, reservedOutpoints)
 		return fmt.Errorf("build unsigned tx: %w", err)

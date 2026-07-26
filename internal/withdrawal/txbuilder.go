@@ -20,10 +20,12 @@ package withdrawal
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
 	"math/big"
 	"strconv"
 	"strings"
@@ -62,17 +64,48 @@ type UnsignedTx struct {
 	Assemble func(signature []byte) ([]byte, error)
 }
 
+// BTCKeys carries the wallet's real P2WPKH key material for the UTXOs being
+// spent: the 20-byte witness program hash (RIPEMD-160(SHA-256(pubkey))) used
+// to build the prevout script and the sighash, and the 33-byte compressed
+// pubkey placed on the witness stack. Both are derived from the wallet's
+// account xpub at the active address's derivation path. When zero-valued
+// (DEV_MODE without an xpub), the builder falls back to a placeholder and
+// logs a warning.
+type BTCKeys struct {
+	PubKeyHash       [20]byte
+	CompressedPubKey []byte
+}
+
+// SolanaKeys carries the wallet's real ed25519 `from` pubkey. The address
+// record persisted at wallet creation stores the base58 pubkey; the builder
+// decodes it into the 32-byte form required by the Solana message header.
+// When zero-valued (DEV_MODE without a derived address), the builder falls
+// back to a deterministic placeholder and logs a warning.
+type SolanaKeys struct {
+	From [32]byte
+}
+
+// BuildOpts carries chain-specific key material and RPC fetchers needed to
+// produce a sighash that will validate onchain. Fields are ignored for
+// chains that don't need them.
+type BuildOpts struct {
+	BTC             BTCKeys
+	Solana          SolanaKeys
+	SolanaBlockhash SolanaBlockhashFetcher
+}
+
 // BuildUnsignedTx constructs an UnsignedTx for the given wallet, withdrawal,
 // reserved nonce (EVM) and reserved outpoints (BTC). For Solana neither is
-// needed.
-func BuildUnsignedTx(w *wallet.Wallet, wr *storage.WithdrawalRequest, nonce int64, outpoints []string) (*UnsignedTx, error) {
+// needed. opts carries the real key material and RPC fetchers; in DEV_MODE
+// callers may pass a zero-value opts to fall back to placeholders.
+func BuildUnsignedTx(ctx context.Context, w *wallet.Wallet, wr *storage.WithdrawalRequest, nonce int64, outpoints []string, opts BuildOpts) (*UnsignedTx, error) {
 	switch {
 	case w.Chain.IsEVM():
 		return buildEVMUnsignedTx(w, wr, nonce)
 	case w.Chain == wallet.ChainBitcoin:
-		return buildBTCUnsignedTx(w, wr, outpoints)
+		return buildBTCUnsignedTx(w, wr, outpoints, opts)
 	case w.Chain == wallet.ChainSolana:
-		return buildSolanaUnsignedTx(w, wr)
+		return buildSolanaUnsignedTx(ctx, w, wr, opts)
 	default:
 		return nil, fmt.Errorf("unsupported chain %q", w.Chain)
 	}
@@ -117,7 +150,7 @@ func buildEVMUnsignedTx(w *wallet.Wallet, wr *storage.WithdrawalRequest, nonce i
 // MPC signer payload is the concatenation of each input's sighash. Assemble
 // injects the [sig+sighashType, pubkey] witness stack per input and
 // serializes the final tx.
-func buildBTCUnsignedTx(w *wallet.Wallet, wr *storage.WithdrawalRequest, outpoints []string) (*UnsignedTx, error) {
+func buildBTCUnsignedTx(w *wallet.Wallet, wr *storage.WithdrawalRequest, outpoints []string, opts BuildOpts) (*UnsignedTx, error) {
 	if len(outpoints) == 0 {
 		return nil, errors.New("btc: no reserved outpoints")
 	}
@@ -133,10 +166,25 @@ func buildBTCUnsignedTx(w *wallet.Wallet, wr *storage.WithdrawalRequest, outpoin
 	if err != nil {
 		return nil, fmt.Errorf("btc to_address: %w", err)
 	}
+	// P2WPKH prevout script: OP_0 <20-byte hash>. The wallet's real pubkey
+	// hash is derived from the account xpub at the active address's
+	// derivation path by the caller and supplied in opts.BTC. When unset
+	// (DEV_MODE without an xpub), fall back to a zero placeholder so the
+	// sighash structure is well-formed; the signature will NOT validate
+	// onchain in that mode.
+	pkHash := opts.BTC.PubKeyHash
+	witnessPub := opts.BTC.CompressedPubKey
+	if pkHash == ([20]byte{}) {
+		log.Printf("warn: btc withdrawal for wallet %s built with placeholder pubkey hash (DEV_MODE only; signature will not validate onchain)", w.ID)
+	}
+	if witnessPub == nil {
+		witnessPub = make([]byte, 33)
+	}
 	tx := wire.NewMsgTx(2)
 	tx.AddTxOut(&wire.TxOut{Value: satoshis, PkScript: toScript})
 	fetcher := txscript.NewMultiPrevOutFetcher(nil)
 	perInputAmount := satoshis / int64(len(outpoints))
+	pkScript, _ := txscript.PayToAddrScript(mustP2WPKHAddr(pkHash[:], net))
 	for _, op := range outpoints {
 		prevTxHash, vout, err := parseOutpoint(op)
 		if err != nil {
@@ -144,26 +192,20 @@ func buildBTCUnsignedTx(w *wallet.Wallet, wr *storage.WithdrawalRequest, outpoin
 		}
 		outpoint := wire.OutPoint{Hash: prevTxHash, Index: vout}
 		tx.AddTxIn(&wire.TxIn{PreviousOutPoint: outpoint, Sequence: 0xfffffffd})
-		// P2WPKH prevout script: OP_0 <20-byte hash>. We don't have the
-		// wallet's pubkey hash at build time (the MPC signer holds the
-		// key); use a zero placeholder so the sighash structure is
-		// well-formed. The gateway recomputes the sighash against the
-		// real prevout before validating.
-		pkScript, _ := txscript.PayToAddrScript(mustP2WPKHAddr(make([]byte, 20), net))
 		fetcher.AddPrevOut(outpoint, &wire.TxOut{Value: perInputAmount, PkScript: pkScript})
 	}
 	sigHashes := txscript.NewTxSigHashes(tx, fetcher)
 	sighashType := txscript.SigHashAll
 	var hashConcat bytes.Buffer
 	for i := range tx.TxIn {
-		pkHash := make([]byte, 20)
-		sh, err := txscript.CalcWitnessSigHash(pkHash, sigHashes, sighashType, tx, i, perInputAmount)
+		sh, err := txscript.CalcWitnessSigHash(pkScript, sigHashes, sighashType, tx, i, perInputAmount)
 		if err != nil {
 			return nil, fmt.Errorf("sighash input %d: %w", i, err)
 		}
 		hashConcat.Write(sh)
 	}
 	payload := hashConcat.Bytes()
+	witnessPubCopy := append([]byte(nil), witnessPub...)
 	return &UnsignedTx{
 		Chain:   wallet.ChainBitcoin,
 		Payload: payload,
@@ -175,8 +217,7 @@ func buildBTCUnsignedTx(w *wallet.Wallet, wr *storage.WithdrawalRequest, outpoin
 				sig := make([]byte, 65)
 				copy(sig[:64], signature[i*64:(i+1)*64])
 				sig[64] = byte(sighashType)
-				emptyPub := make([]byte, 33)
-				tx.TxIn[i].Witness = wire.TxWitness{sig, emptyPub}
+				tx.TxIn[i].Witness = wire.TxWitness{sig, witnessPubCopy}
 			}
 			var buf bytes.Buffer
 			if err := tx.Serialize(&buf); err != nil {
@@ -190,14 +231,18 @@ func buildBTCUnsignedTx(w *wallet.Wallet, wr *storage.WithdrawalRequest, outpoin
 // buildSolanaUnsignedTx constructs a SystemProgram.Transfer instruction
 // message. Solana signs the serialized message, so the MPC payload IS the
 // message and Assemble attaches the signature to the Transaction.
-func buildSolanaUnsignedTx(w *wallet.Wallet, wr *storage.WithdrawalRequest) (*UnsignedTx, error) {
-	// Solana from = a 32-byte pubkey derived deterministically from the
-	// wallet ID (sha256). The MPC signer holds the real key; this builder
-	// only needs a well-formed 32-byte placeholder so the message structure
-	// is correct.
-	fromHash := sha256.Sum256([]byte(wr.WalletID.String()))
-	var from [32]byte
-	copy(from[:], fromHash[:])
+func buildSolanaUnsignedTx(ctx context.Context, w *wallet.Wallet, wr *storage.WithdrawalRequest, opts BuildOpts) (*UnsignedTx, error) {
+	// Solana from = the wallet's real ed25519 pubkey, decoded from the
+	// base58 address stored on the wallet's active address record. When
+	// zero (DEV_MODE without a derived address), fall back to a
+	// deterministic placeholder so the message structure is well-formed;
+	// the signature will NOT validate onchain in that mode.
+	from := opts.Solana.From
+	if from == ([32]byte{}) {
+		log.Printf("warn: solana withdrawal for wallet %s built with placeholder from pubkey (DEV_MODE only; signature will not validate onchain)", w.ID)
+		fromHash := sha256.Sum256([]byte(wr.WalletID.String()))
+		copy(from[:], fromHash[:])
+	}
 	to, err := decodeSolanaPubkey(wr.ToAddress)
 	if err != nil {
 		return nil, fmt.Errorf("solana to_address: %w", err)
@@ -206,11 +251,29 @@ func buildSolanaUnsignedTx(w *wallet.Wallet, wr *storage.WithdrawalRequest) (*Un
 	if err != nil {
 		return nil, fmt.Errorf("solana amount parse: %w", err)
 	}
-	// recent blockhash: zero-hash placeholder; the gateway injects the real
-	// one before broadcast. The MPC signs the message regardless of the
-	// blockhash value (the signature remains valid as long as the blockhash
-	// the gateway uses matches what was signed).
-	blockhash := sha256.Sum256([]byte("solana-recent-blockhash-placeholder"))
+	// recent blockhash: fetch a real one from the Solana RPC. When no
+	// fetcher is wired (DEV_MODE without an RPC URL), fall back to a
+	// deterministic placeholder and log a warning; the signature will not
+	// validate onchain in that mode. In prod the fetcher is required and
+	// a fetch error aborts the withdrawal.
+	var blockhash [32]byte
+	switch {
+	case opts.SolanaBlockhash != nil:
+		fetched, err := opts.SolanaBlockhash.FetchRecentBlockhash(ctx)
+		if err != nil {
+			if errors.Is(err, ErrNoSolanaRPC) {
+				log.Printf("warn: solana withdrawal for wallet %s built with placeholder blockhash (DEV_MODE only; signature will not validate onchain): %v", w.ID, err)
+				blockhash = sha256.Sum256([]byte("solana-recent-blockhash-placeholder"))
+			} else {
+				return nil, fmt.Errorf("solana: fetch recent blockhash: %w", err)
+			}
+		} else {
+			blockhash = fetched
+		}
+	default:
+		log.Printf("warn: solana withdrawal for wallet %s built with placeholder blockhash (DEV_MODE only; signature will not validate onchain)", w.ID)
+		blockhash = sha256.Sum256([]byte("solana-recent-blockhash-placeholder"))
+	}
 	msg := buildSolanaMessage(from, to, lamports, blockhash)
 	return &UnsignedTx{
 		Chain:   wallet.ChainSolana,
