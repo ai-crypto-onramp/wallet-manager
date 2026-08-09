@@ -1,0 +1,166 @@
+package nonce
+
+import (
+	"context"
+	"sync"
+	"testing"
+
+	"github.com/ai-crypto-onramp/wallet-manager/internal/lock"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/storage/memstore"
+	"github.com/ai-crypto-onramp/wallet-manager/internal/wallet"
+	"github.com/google/uuid"
+)
+
+func newSvc(t *testing.T) (*Service, *memstore.Store) {
+	t.Helper()
+	st := memstore.New()
+	lk := lock.NewMemLocker()
+	return NewService(st, lk), st
+}
+
+func TestReserveNonceSequential(t *testing.T) {
+	svc, _ := newSvc(t)
+	ctx := context.Background()
+	wID := uuid.New()
+	for i := 0; i < 5; i++ {
+		n, err := svc.ReserveNonce(ctx, wID, wallet.ChainEthereum)
+		if err != nil {
+			t.Fatalf("reserve %d: %v", i, err)
+		}
+		if n != int64(i) {
+			t.Errorf("expected %d, got %d", i, n)
+		}
+	}
+	n, _ := svc.Get(ctx, wID, wallet.ChainEthereum)
+	if n.PendingNonce != 5 || n.BroadcastNonce != 0 {
+		t.Errorf("expected pending=5 broadcast=0, got %+v", n)
+	}
+}
+
+func TestReserveNonceConcurrentDistinctNoGaps(t *testing.T) {
+	svc, st := newSvc(t)
+	ctx := context.Background()
+	wID := uuid.New()
+	const n = 10
+	var wg sync.WaitGroup
+	res := make(chan int64, n)
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			v, err := svc.ReserveNonce(ctx, wID, wallet.ChainEthereum)
+			if err != nil {
+				errs <- err
+				return
+			}
+			res <- v
+		}()
+	}
+	wg.Wait()
+	close(res)
+	close(errs)
+	for err := range errs {
+		t.Fatalf("reserve error: %v", err)
+	}
+	seen := map[int64]bool{}
+	var values []int64
+	for v := range res {
+		if seen[v] {
+			t.Errorf("duplicate nonce reserved: %d", v)
+		}
+		seen[v] = true
+		values = append(values, v)
+	}
+	if len(values) != n {
+		t.Fatalf("expected %d nonces, got %d", n, len(values))
+	}
+	// all values 0..n-1 must be present (no gaps)
+	for i := 0; i < n; i++ {
+		if !seen[int64(i)] {
+			t.Errorf("missing nonce %d in reserved set", i)
+		}
+	}
+	got, _ := st.GetNonce(ctx, wID, "ethereum")
+	if got.PendingNonce != int64(n) {
+		t.Errorf("expected pending=%d, got %d", n, got.PendingNonce)
+	}
+}
+
+func TestCommitNonce(t *testing.T) {
+	svc, st := newSvc(t)
+	ctx := context.Background()
+	wID := uuid.New()
+	n, _ := svc.ReserveNonce(ctx, wID, wallet.ChainEthereum)
+	if err := svc.CommitNonce(ctx, wID, wallet.ChainEthereum, n); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := st.GetNonce(ctx, wID, "ethereum")
+	if got.BroadcastNonce != n+1 {
+		t.Errorf("expected broadcast=%d, got %d", n+1, got.BroadcastNonce)
+	}
+}
+
+func TestRollbackNonceGapSafe(t *testing.T) {
+	svc, st := newSvc(t)
+	ctx := context.Background()
+	wID := uuid.New()
+	n0, _ := svc.ReserveNonce(ctx, wID, wallet.ChainEthereum) // 0
+	n1, _ := svc.ReserveNonce(ctx, wID, wallet.ChainEthereum) // 1
+	// rollback n1 — the most recently reserved nonce. pending_nonce should
+	// be decremented back to 1 so the next reservation reuses n1 (no gap).
+	if err := svc.RollbackNonce(ctx, wID, wallet.ChainEthereum, n1); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := st.GetNonce(ctx, wID, "ethereum")
+	if got.PendingNonce != 1 {
+		t.Errorf("expected pending=1 after rollback of most-recent nonce, got %d", got.PendingNonce)
+	}
+	// commit n0
+	_ = svc.CommitNonce(ctx, wID, wallet.ChainEthereum, n0)
+	got, _ = st.GetNonce(ctx, wID, "ethereum")
+	if got.BroadcastNonce != 1 {
+		t.Errorf("expected broadcast=1, got %d", got.BroadcastNonce)
+	}
+	// next reserve should reuse the rolled-back n1 value (1), not 2.
+	n1Again, _ := svc.ReserveNonce(ctx, wID, wallet.ChainEthereum)
+	if n1Again != 1 {
+		t.Errorf("expected next reserve=1 (reused), got %d", n1Again)
+	}
+}
+
+func TestRollbackNonceNoOpWhenHigherReserved(t *testing.T) {
+	svc, st := newSvc(t)
+	ctx := context.Background()
+	wID := uuid.New()
+	_, _ = svc.ReserveNonce(ctx, wID, wallet.ChainEthereum)   // 0
+	n1, _ := svc.ReserveNonce(ctx, wID, wallet.ChainEthereum) // 1
+	_, _ = svc.ReserveNonce(ctx, wID, wallet.ChainEthereum)   // 2
+	// rollback n1 — but n2 has already been reserved, so pending_nonce cannot
+	// be decremented back to 1 (that would let n1 be re-reserved while n2 is
+	// still outstanding). The rollback is a no-op and the gap is filled by
+	// the chain's mempool replacement policy.
+	if err := svc.RollbackNonce(ctx, wID, wallet.ChainEthereum, n1); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := st.GetNonce(ctx, wID, "ethereum")
+	if got.PendingNonce != 3 {
+		t.Errorf("expected pending=3 (rollback no-op), got %d", got.PendingNonce)
+	}
+	// next reserve continues monotonically from 3.
+	n3, _ := svc.ReserveNonce(ctx, wID, wallet.ChainEthereum)
+	if n3 != 3 {
+		t.Errorf("expected next reserve=3, got %d", n3)
+	}
+}
+
+func TestGetNonceEmpty(t *testing.T) {
+	svc, _ := newSvc(t)
+	n, err := svc.Get(context.Background(), uuid.New(), wallet.ChainPolygon)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.PendingNonce != 0 || n.BroadcastNonce != 0 {
+		t.Errorf("expected zero, got %+v", n)
+	}
+}

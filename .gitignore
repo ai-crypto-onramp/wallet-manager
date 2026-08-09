@@ -1,0 +1,10 @@
+bin/
+*.exe
+vendor/
+.env
+*.log
+*.test
+/wallet-management
+coverage.out
+*.testcoverage.out
+/migrate
