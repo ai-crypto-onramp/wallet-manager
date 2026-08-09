@@ -1,4 +1,4 @@
-.PHONY: build test lint cover run \
+.PHONY: build test lint cover cover-check run \
 	migrate-up migrate-down migrate-new \
 	docker-build docker-run docker-up docker-down clean proto
 
@@ -13,14 +13,30 @@ proto:
 build:
 	go build -o bin/wallet-management ./cmd/wallet-management
 
+# coverpkg excludes internal/pb (generated protobuf code) so the coverage
+# number reflects hand-written code only. pb is also ignored by Codecov.
+COVERPKG = $(shell go list ./internal/... | grep -v '/internal/pb$$' | tr '\n' ',')
+
 test:
-	go test ./internal/... -race -timeout 120s -coverprofile=coverage.out -coverpkg=./internal/...
+	go test ./internal/... -race -timeout 120s -coverprofile=coverage.out -coverpkg=$(COVERPKG)
 
 lint:
 	golangci-lint run
 
 cover: test
 	go tool cover -func=coverage.out | tail -1
+
+# cover-check runs the test suite and fails if total coverage (excluding
+# internal/pb) falls below 80%.
+cover-check:
+	go test ./internal/... -race -timeout 120s -coverprofile=coverage.out -coverpkg=$(COVERPKG)
+	@total=$$(go tool cover -func=coverage.out | awk '/^total:/ {gsub(/%/,"",$$NF); print $$NF}'); \
+	echo "Coverage: $$total%"; \
+	awk -v t=$$total 'BEGIN { exit !(t >= 80) }'; \
+	if [ $$? -ne 0 ]; then \
+		echo "ERROR: coverage $$total% is below 80% threshold"; \
+		exit 1; \
+	fi
 
 run:
 	go run ./cmd/wallet-management

@@ -251,6 +251,27 @@ func TestChainOfAsset(t *testing.T) {
 	}
 }
 
+func TestStartListenError(t *testing.T) {
+	srv := NewServer(Deps{})
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	if err := srv.Start(ln.Addr().String()); err == nil {
+		t.Error("expected listen error on already-bound address")
+	}
+}
+
+func TestStartAndServe(t *testing.T) {
+	srv := NewServer(Deps{})
+	go func() {
+		_ = srv.Start("127.0.0.1:0")
+	}()
+	time.Sleep(50 * time.Millisecond)
+	srv.Stop()
+}
+
 // grpcInvoke is a tiny helper that invokes a unary method on the wallet service.
 func grpcInvoke(ctx context.Context, conn *grpc.ClientConn, method string, req, resp any) error {
 	return conn.Invoke(ctx, "/wallet.WalletService/"+method, req, resp)

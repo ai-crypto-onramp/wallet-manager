@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/ai-crypto-onramp/wallet-manager/internal/audit"
 	"github.com/ai-crypto-onramp/wallet-manager/internal/balance"
@@ -364,6 +366,46 @@ func TestNewServerAndStartShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	_ = srv.Shutdown(ctx)
+}
+
+func TestStartAndShutdown(t *testing.T) {
+	deps, _ := newErrDeps(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	_ = ln.Close()
+	srv := NewServer(addr, deps)
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.Start() }()
+	time.Sleep(100 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	select {
+	case err := <-errCh:
+		if err != nil && err != http.ErrServerClosed {
+			t.Errorf("Start returned unexpected error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("Start did not return after Shutdown")
+	}
+}
+
+func TestStartListenError(t *testing.T) {
+	deps, _ := newErrDeps(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	srv := NewServer(ln.Addr().String(), deps)
+	if err := srv.Start(); err == nil {
+		t.Error("expected listen error on already-bound address")
+	}
 }
 
 func TestPostWalletMissingLabel(t *testing.T) {
