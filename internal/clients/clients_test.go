@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/ai-crypto-onramp/wallet-manager/internal/grpcclient"
 	walletpb "github.com/ai-crypto-onramp/wallet-manager/internal/pb"
@@ -190,5 +191,71 @@ func TestDefaultDialConfigDevModeIsInsecure(t *testing.T) {
 	cfg := defaultDialConfig(true)
 	if len(cfg.grpcOpts) != 1 {
 		t.Fatalf("expected exactly one default dial option, got %d", len(cfg.grpcOpts))
+	}
+}
+
+func TestMPCSigningClientPingReady(t *testing.T) {
+	srv := &fakeMPCServer{}
+	target, dialOpt, stop := startMPCServer(t, srv)
+	defer stop()
+
+	c, err := NewMPCSigningClient(target, true, WithGRPCDialOptions(dialOpt, grpc.WithTransportCredentials(insecure.NewCredentials())))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := c.Ping(ctx); err != nil {
+		t.Fatalf("ping: %v", err)
+	}
+}
+
+func TestMPCSigningClientPingClosed(t *testing.T) {
+	srv := &fakeMPCServer{}
+	target, dialOpt, stop := startMPCServer(t, srv)
+	defer stop()
+
+	c, err := NewMPCSigningClient(target, true, WithGRPCDialOptions(dialOpt, grpc.WithTransportCredentials(insecure.NewCredentials())))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = c.Close()
+	if err := c.Ping(context.Background()); err == nil {
+		t.Fatal("expected ping error after close")
+	}
+}
+
+func TestGatewayClientPingReady(t *testing.T) {
+	srv := &fakeGatewayServer{}
+	target, dialOpt, stop := startGatewayServer(t, srv)
+	defer stop()
+
+	c, err := NewGatewayClient(target, true, WithGRPCDialOptions(dialOpt, grpc.WithTransportCredentials(insecure.NewCredentials())))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := c.Ping(ctx); err != nil {
+		t.Fatalf("ping: %v", err)
+	}
+}
+
+func TestGatewayClientPingClosed(t *testing.T) {
+	srv := &fakeGatewayServer{}
+	target, dialOpt, stop := startGatewayServer(t, srv)
+	defer stop()
+
+	c, err := NewGatewayClient(target, true, WithGRPCDialOptions(dialOpt, grpc.WithTransportCredentials(insecure.NewCredentials())))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = c.Close()
+	if err := c.Ping(context.Background()); err == nil {
+		t.Fatal("expected ping error after close")
 	}
 }

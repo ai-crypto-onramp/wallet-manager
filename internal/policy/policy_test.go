@@ -92,3 +92,37 @@ func TestHTTPClientMarshalError(t *testing.T) {
 	_ = c
 	_ = errors.New
 }
+
+func TestHTTPClientPingOK(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/healthz" {
+			t.Errorf("ping path = %q want /healthz", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	c := NewHTTPClient(srv.URL)
+	if err := c.Ping(context.Background()); err != nil {
+		t.Fatalf("ping: %v", err)
+	}
+}
+
+func TestHTTPClientPing5xx(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	c := NewHTTPClient(srv.URL)
+	if err := c.Ping(context.Background()); err == nil {
+		t.Fatal("expected ping error on 500")
+	}
+}
+
+func TestHTTPClientPingUnreachable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	srv.Close()
+	c := NewHTTPClient(srv.URL)
+	if err := c.Ping(context.Background()); err == nil {
+		t.Fatal("expected ping error when server is down")
+	}
+}

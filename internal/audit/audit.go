@@ -45,7 +45,8 @@ type Sink interface {
 // Kafka topic. The envelope's `payload` field carries the event's raw
 // `Payload` bytes; `payload_hash` is the SHA-256 of those bytes.
 type KafkaSink struct {
-	writer *kafka.Writer
+	writer  *kafka.Writer
+	brokers []string
 }
 
 // NewKafkaSink returns a KafkaSink targeting the given brokers (comma-
@@ -62,6 +63,7 @@ func NewKafkaSink(brokers []string) *KafkaSink {
 			BatchTimeout: 10 * time.Millisecond,
 			RequiredAcks: kafka.RequireAll,
 		},
+		brokers: brokers,
 	}
 }
 
@@ -71,6 +73,19 @@ func (s *KafkaSink) Close() error {
 		return nil
 	}
 	return s.writer.Close()
+}
+
+// Ping dials the first broker to verify reachability. When no Kafka sink is
+// configured, Ping returns an error.
+func (s *KafkaSink) Ping(ctx context.Context) error {
+	if s.writer == nil || len(s.brokers) == 0 {
+		return fmt.Errorf("audit kafka: not configured")
+	}
+	conn, err := kafka.DialContext(ctx, "tcp", s.brokers[0])
+	if err != nil {
+		return err
+	}
+	return conn.Close()
 }
 
 // Deliver wraps each event in the canonical envelope and publishes it.

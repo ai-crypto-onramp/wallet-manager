@@ -69,7 +69,7 @@ func run() error {
 		log.Printf("warn: migrations: %v (continuing)", err)
 	}
 
-	c, lk := initCacheAndLocker(ctx, cfg, devMode)
+	c, lk, redisClient := initCacheAndLocker(ctx, cfg, devMode)
 	registry, err := buildDeriverRegistry(cfg, c, devMode)
 	if err != nil {
 		return err
@@ -79,7 +79,9 @@ func run() error {
 	emitter := audit.NewEmitter(st, auditSink)
 	emitter.Start(ctx, 5*time.Second)
 	defer emitter.Stop()
+	var auditKafka *audit.KafkaSink
 	if ks, ok := auditSink.(*audit.KafkaSink); ok {
+		auditKafka = ks
 		defer ks.Close()
 	}
 
@@ -96,10 +98,14 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	var signerClient *clients.MPCSigningClient
+	var gatewayClient *clients.GatewayClient
 	if cs, ok := signer.(*clients.MPCSigningClient); ok {
+		signerClient = cs
 		defer cs.Close()
 	}
 	if cg, ok := gw.(*clients.GatewayClient); ok {
+		gatewayClient = cg
 		defer cg.Close()
 	}
 
@@ -125,6 +131,7 @@ func run() error {
 		Funding:    fundingSvc,
 		Withdrawal: withdrawalSvc,
 		Nonce:      nonceSvc,
+		Readiness:  buildReadinessChecks(st, redisClient, auditKafka, treasuryClient, policyClient, signerClient, gatewayClient),
 	})
 	grpcSrv := grpcserver.NewServer(grpcserver.Deps{
 		KeyMappings: keymapSvc,
@@ -154,7 +161,7 @@ func run() error {
 	return nil
 }
 
-func initCacheAndLocker(ctx context.Context, cfg config.Config, devMode bool) (cache.Cache, lock.Locker) {
+func initCacheAndLocker(ctx context.Context, cfg config.Config, devMode bool) (cache.Cache, lock.Locker, *redis.Client) {
 	rdb, redisErr := redis.ParseURL(cfg.RedisURL)
 	if redisErr == nil {
 		rc := redis.NewClient(rdb)
@@ -162,7 +169,7 @@ func initCacheAndLocker(ctx context.Context, cfg config.Config, devMode bool) (c
 			c := cache.NewRedisFromClient(rc, cfg.DerivationCacheTTL)
 			lk := lock.NewRedisLocker(rc)
 			log.Printf("connected to redis at %s", cfg.RedisURL)
-			return c, lk
+			return c, lk, rc
 		}
 	}
 	if !devMode {
@@ -170,7 +177,7 @@ func initCacheAndLocker(ctx context.Context, cfg config.Config, devMode bool) (c
 	} else {
 		log.Printf("DEV_MODE=1: redis unavailable; using in-memory cache and locker (NOT FOR PRODUCTION)")
 	}
-	return cache.NewMem(), lock.NewMemLocker()
+	return cache.NewMem(), lock.NewMemLocker(), nil
 }
 
 func buildDeriverRegistry(cfg config.Config, c cache.Cache, devMode bool) (*deriver.Registry, error) {
@@ -264,4 +271,37 @@ func initSolanaBlockhashFetcher(devMode bool) withdrawal.SolanaBlockhashFetcher 
 	}
 	log.Printf("solana blockhash fetcher: %s", url)
 	return withdrawal.NewSolanaRPCBlockhashFetcher(url)
+}
+
+// buildReadinessChecks assembles the /readyz dependency probes: the Postgres
+// store, Redis cache/locker, audit Kafka sink, treasury & policy HTTP
+// clients, and the mpc-signer & blockchain-gateway gRPC clients. When a
+// dependency is not wired (dev / stub mode) its check is omitted, so the
+// service reports ready.
+func buildReadinessChecks(st *postgres.Store, rc *redis.Client, auditKafka *audit.KafkaSink, treasury *funding.HTTPTreasuryClient, policyClient *policy.HTTPClient, signer *clients.MPCSigningClient, gw *clients.GatewayClient) []restapi.ReadinessCheck {
+	var checks []restapi.ReadinessCheck
+	if st != nil {
+		checks = append(checks, restapi.ReadinessCheck{Name: "db", Check: st.DB().PingContext})
+	}
+	if rc != nil {
+		checks = append(checks, restapi.ReadinessCheck{Name: "redis", Check: func(ctx context.Context) error {
+			return rc.Ping(ctx).Err()
+		}})
+	}
+	if auditKafka != nil {
+		checks = append(checks, restapi.ReadinessCheck{Name: "audit_kafka", Check: auditKafka.Ping})
+	}
+	if treasury != nil && treasury.URL != "" {
+		checks = append(checks, restapi.ReadinessCheck{Name: "treasury", Check: treasury.Ping})
+	}
+	if policyClient != nil && policyClient.URL != "" {
+		checks = append(checks, restapi.ReadinessCheck{Name: "policy_risk_engine", Check: policyClient.Ping})
+	}
+	if signer != nil {
+		checks = append(checks, restapi.ReadinessCheck{Name: "mpc_signer", Check: signer.Ping})
+	}
+	if gw != nil {
+		checks = append(checks, restapi.ReadinessCheck{Name: "blockchain_gateway", Check: gw.Ping})
+	}
+	return checks
 }

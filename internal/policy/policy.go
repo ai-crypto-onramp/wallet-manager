@@ -43,6 +43,11 @@ func NewHTTPClient(url string) *HTTPClient {
 	return &HTTPClient{URL: url, Client: &http.Client{Timeout: 5 * time.Second}}
 }
 
+// Ping probes the policy/risk engine's /healthz endpoint.
+func (c *HTTPClient) Ping(ctx context.Context) error {
+	return httpHealthPing(ctx, c.Client, c.URL+"/healthz")
+}
+
 // CheckWhitelist calls POST /v1/whitelist/check.
 func (c *HTTPClient) CheckWhitelist(ctx context.Context, req *CheckRequest) (*CheckResponse, error) {
 	body, err := json.Marshal(req)
@@ -81,4 +86,21 @@ func (m *MockClient) CheckWhitelist(ctx context.Context, req *CheckRequest) (*Ch
 		return m.CheckFn(ctx, req)
 	}
 	return &CheckResponse{Approved: true, DecisionID: "mock-decision"}, nil
+}
+
+func httpHealthPing(ctx context.Context, client *http.Client, url string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 500 {
+		return fmt.Errorf("healthz status %d", resp.StatusCode)
+	}
+	return nil
 }

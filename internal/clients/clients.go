@@ -25,9 +25,28 @@ import (
 	"github.com/ai-crypto-onramp/wallet-manager/internal/grpcclient"
 	walletpb "github.com/ai-crypto-onramp/wallet-manager/internal/pb"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )
+
+// grpcConnReady reports whether the gRPC connection reaches the Ready state
+// before ctx expires. It triggers Connect and waits for a state transition.
+func grpcConnReady(ctx context.Context, cc *grpc.ClientConn) error {
+	cc.Connect()
+	for {
+		st := cc.GetState()
+		switch st {
+		case connectivity.Ready:
+			return nil
+		case connectivity.Shutdown:
+			return fmt.Errorf("grpc: connection shut down")
+		}
+		if !cc.WaitForStateChange(ctx, st) {
+			return fmt.Errorf("grpc: not ready: %w", ctx.Err())
+		}
+	}
+}
 
 // DialOption is a functional option for configuring a gRPC client.
 type DialOption func(*dialConfig)
@@ -137,6 +156,17 @@ func (c *MPCSigningClient) Close() error {
 	return nil
 }
 
+// Ping verifies the gRPC connection to mpc-signing-service reaches Ready.
+func (c *MPCSigningClient) Ping(ctx context.Context) error {
+	c.mu.Lock()
+	conn := c.conn
+	c.mu.Unlock()
+	if conn == nil {
+		return fmt.Errorf("mpc-signing: connection closed")
+	}
+	return grpcConnReady(ctx, conn)
+}
+
 // GatewayClient is a real gRPC client for blockchain-gateway. It satisfies
 // grpcclient.GatewayClient.
 type GatewayClient struct {
@@ -188,6 +218,17 @@ func (c *GatewayClient) Close() error {
 		return err
 	}
 	return nil
+}
+
+// Ping verifies the gRPC connection to blockchain-gateway reaches Ready.
+func (c *GatewayClient) Ping(ctx context.Context) error {
+	c.mu.Lock()
+	conn := c.conn
+	c.mu.Unlock()
+	if conn == nil {
+		return fmt.Errorf("blockchain-gateway: connection closed")
+	}
+	return grpcConnReady(ctx, conn)
 }
 
 // Compile-time interface conformance checks.

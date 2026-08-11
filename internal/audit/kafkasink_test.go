@@ -154,4 +154,19 @@ func TestKafkaSinkClose(t *testing.T) {
 	}
 }
 
+func TestKafkaSinkPingNotConfigured(t *testing.T) {
+	s := &KafkaSink{}
+	if err := s.Ping(context.Background()); err == nil {
+		t.Fatal("expected ping error when not configured")
+	}
+}
+
+func TestKafkaSinkPingUnreachable(t *testing.T) {
+	s := NewKafkaSink([]string{"127.0.0.1:1"})
+	defer s.Close()
+	if err := s.Ping(context.Background()); err == nil {
+		t.Fatal("expected ping error when broker unreachable")
+	}
+}
+
 var _ = errors.New

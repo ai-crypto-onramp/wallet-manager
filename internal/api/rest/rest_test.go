@@ -101,6 +101,115 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
+func TestReadyzEmpty(t *testing.T) {
+	deps, _ := newDeps(t)
+	r := NewRouter(deps)
+	rec := doRequest(t, r, http.MethodGet, "/readyz", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var body struct {
+		Status string            `json:"status"`
+		Checks map[string]string `json:"checks"`
+	}
+	decode(t, rec, &body)
+	if body.Status != "ready" {
+		t.Fatalf("status=%q want ready", body.Status)
+	}
+}
+
+func TestReadyzAllDownReturns503(t *testing.T) {
+	deps, _ := newDeps(t)
+	deps.Readiness = []ReadinessCheck{
+		{Name: "db", Check: func(ctx context.Context) error { return errors.New("down") }},
+	}
+	r := NewRouter(deps)
+	rec := doRequest(t, r, http.MethodGet, "/readyz", nil)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rec.Code)
+	}
+	var body struct {
+		Status string            `json:"status"`
+		Checks map[string]string `json:"checks"`
+	}
+	decode(t, rec, &body)
+	if body.Status != "not ready" {
+		t.Fatalf("status=%q want not ready", body.Status)
+	}
+	if body.Checks["db"] != "down" {
+		t.Fatalf("db=%q want down", body.Checks["db"])
+	}
+}
+
+func TestReadyzPartialDownReturnsDegraded(t *testing.T) {
+	deps, _ := newDeps(t)
+	deps.Readiness = []ReadinessCheck{
+		{Name: "db", Check: func(ctx context.Context) error { return nil }},
+		{Name: "redis", Check: func(ctx context.Context) error { return errors.New("down") }},
+	}
+	r := NewRouter(deps)
+	rec := doRequest(t, r, http.MethodGet, "/readyz", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var body struct {
+		Status string            `json:"status"`
+		Checks map[string]string `json:"checks"`
+	}
+	decode(t, rec, &body)
+	if body.Status != "degraded" {
+		t.Fatalf("status=%q want degraded", body.Status)
+	}
+	if body.Checks["redis"] != "down" {
+		t.Fatalf("redis=%q want down", body.Checks["redis"])
+	}
+}
+
+func TestReadyzAllOkReturnsReady(t *testing.T) {
+	deps, _ := newDeps(t)
+	deps.Readiness = []ReadinessCheck{
+		{Name: "db", Check: func(ctx context.Context) error { return nil }},
+		{Name: "redis", Check: func(ctx context.Context) error { return nil }},
+	}
+	r := NewRouter(deps)
+	rec := doRequest(t, r, http.MethodGet, "/readyz", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var body struct {
+		Status string            `json:"status"`
+		Checks map[string]string `json:"checks"`
+	}
+	decode(t, rec, &body)
+	if body.Status != "ready" {
+		t.Fatalf("status=%q want ready", body.Status)
+	}
+	if body.Checks["db"] != "ok" || body.Checks["redis"] != "ok" {
+		t.Fatalf("checks=%v want all ok", body.Checks)
+	}
+}
+
+func TestReadyzNilCheckCountsAsOk(t *testing.T) {
+	deps, _ := newDeps(t)
+	deps.Readiness = []ReadinessCheck{{Name: "db", Check: nil}}
+	r := NewRouter(deps)
+	rec := doRequest(t, r, http.MethodGet, "/readyz", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var body struct {
+		Status string            `json:"status"`
+		Checks map[string]string `json:"checks"`
+	}
+	decode(t, rec, &body)
+	if body.Status != "ready" {
+		t.Fatalf("status=%q want ready", body.Status)
+	}
+	if body.Checks["db"] != "ok" {
+		t.Fatalf("db=%q want ok", body.Checks["db"])
+	}
+}
+
 func TestPostWalletCreated(t *testing.T) {
 	deps, _ := newDeps(t)
 	r := NewRouter(deps)

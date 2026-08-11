@@ -30,6 +30,13 @@ type Deps struct {
 	Funding    *funding.Service
 	Withdrawal *withdrawal.Service
 	Nonce      *nonce.Service
+	Readiness  []ReadinessCheck
+}
+
+// ReadinessCheck is a named dependency probe used by /readyz.
+type ReadinessCheck struct {
+	Name  string
+	Check func(ctx context.Context) error
 }
 
 // NewRouter builds the chi router with all wallet-management endpoints.
@@ -43,6 +50,7 @@ func NewRouter(d Deps) http.Handler {
 	r.Use(authtoken.Middleware(secret, bypass))
 
 	r.Get("/healthz", healthz)
+	r.Get("/readyz", readyz(d))
 
 	r.Route("/v1", func(r chi.Router) {
 		r.Post("/wallets", createWallet(d))
@@ -68,6 +76,37 @@ func NewRouter(d Deps) http.Handler {
 
 func healthz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func readyz(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		checks := d.Readiness
+		results := make(map[string]string, len(checks))
+		failed := 0
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		for _, c := range checks {
+			if c.Check == nil {
+				results[c.Name] = "ok"
+				continue
+			}
+			if err := c.Check(ctx); err != nil {
+				results[c.Name] = "down"
+				failed++
+			} else {
+				results[c.Name] = "ok"
+			}
+		}
+		status := "ready"
+		code := http.StatusOK
+		if failed == len(checks) && len(checks) > 0 {
+			status = "not ready"
+			code = http.StatusServiceUnavailable
+		} else if failed > 0 {
+			status = "degraded"
+		}
+		writeJSON(w, code, map[string]any{"status": status, "checks": results})
+	}
 }
 
 type createWalletReq struct {

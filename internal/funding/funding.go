@@ -48,6 +48,11 @@ func NewHTTPClient(url string) *HTTPTreasuryClient {
 	return &HTTPTreasuryClient{URL: url, Client: &http.Client{Timeout: 10 * time.Second}}
 }
 
+// Ping probes the treasury orchestration service's /healthz endpoint.
+func (c *HTTPTreasuryClient) Ping(ctx context.Context) error {
+	return httpHealthPing(ctx, c.Client, c.URL+"/healthz")
+}
+
 // RequestFunding POSTs the funding request with an idempotency key.
 func (c *HTTPTreasuryClient) RequestFunding(ctx context.Context, req *TreasuryRequest) error {
 	body, err := json.Marshal(req)
@@ -198,4 +203,21 @@ func parseDec(s string) decimal.Decimal {
 		return decimal.Zero
 	}
 	return d
+}
+
+func httpHealthPing(ctx context.Context, client *http.Client, url string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 500 {
+		return fmt.Errorf("healthz status %d", resp.StatusCode)
+	}
+	return nil
 }
