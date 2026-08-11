@@ -18,7 +18,7 @@ build:
 COVERPKG = $(shell go list ./internal/... | grep -v '/internal/pb$$' | tr '\n' ',')
 
 test:
-	go test ./internal/... -race -timeout 120s -coverprofile=coverage.out -coverpkg=$(COVERPKG)
+	go test ./internal/... -race -count=1 -timeout 120s -coverprofile=coverage.out -coverpkg=$(COVERPKG)
 
 lint:
 	golangci-lint run
@@ -29,7 +29,7 @@ cover: test
 # cover-check runs the test suite and fails if total coverage (excluding
 # internal/pb) falls below 80%.
 cover-check:
-	go test ./internal/... -race -timeout 120s -coverprofile=coverage.out -coverpkg=$(COVERPKG)
+	go test ./internal/... -race -count=1 -timeout 120s -coverprofile=coverage.out -coverpkg=$(COVERPKG)
 	@total=$$(go tool cover -func=coverage.out | awk '/^total:/ {gsub(/%/,"",$$NF); print $$NF}'); \
 	echo "Coverage: $$total%"; \
 	awk -v t=$$total 'BEGIN { exit !(t >= 80) }'; \
